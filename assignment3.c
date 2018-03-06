@@ -5,14 +5,9 @@
 #include <time.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <ctype.h>
 
 #include "graphics.h"
-
-//static void delay (void);
-//static void button_press (float x, float y);
-//static void drawscreen (void);
-
-
 
 struct exampleData {
    int   num_cell;
@@ -21,27 +16,11 @@ struct exampleData {
    int   num_cols;
    int * num_terminals;
    int ** net_connect;
+   char * filename;
 };
 
 struct partitionStruct {
-   //float   initTemp;
-   //float   currTemp;
-   //bool    betaDecay;
-   //bool    tempBetaSwitch;
-   //float   tempBeta;
-   //float   tempBeta2;
-   //int     tempIter ;
    int     maxSteps;
-   //bool    stepAccept;
-   //float   accRate;
-   //int     accCnt;
-   //int     bb_size;
-   //int     bb_x_max;
-   //int     bb_x_min;
-   //int     bb_y_max;
-   //int     bb_y_min;
-   //float   stopCostStd;
-   //int     numStopIter;
 };
 
 struct location {
@@ -50,8 +29,8 @@ struct location {
 };
 
 struct partition_cell {
-   int   partition;
-   bool  locked;
+   int     partition;
+   bool    locked;
    float   gain;
    struct location location;
 };
@@ -61,33 +40,36 @@ struct partition_cell {
 void readfile (const char* filename, struct exampleData * data);
 void printPartition ( struct partition_cell * partitionCfg, struct exampleData * cfgStruct);
 int calcCutSet ( struct partition_cell * partitionCfg, struct exampleData * cfgStruct);
-int KerrighanLinStep(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct, int cutSet);
+int KerrighanLinStep(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct, int cutSet, int step);
 void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct);
 void initSchedule(struct exampleData * cfgStruct, struct partitionStruct * schedStruct);
 float calcStd(int * x, int num_samples);
 void unlockNodes( struct partition_cell * partitionCfg, struct exampleData * cfgStruct);
 void calcGains(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct);
+unsigned int commandlineParse(int argc, char *argv[]  );
 
-/***** GUI functions **************/
+/***** GUI functionsand global variables  **************/
 
-char       gRunMode        = 's'     ; /* run mode, default is step     */
+char       gRunMode        = 'p'     ; /* run mode, default is step     */
 char       gFooterLabel[1024]  =""; /* global footer text label   */
 char       gHeaderLabel[1024]  =""; /* global header text label   */
 char       gFooterMessage[1024]=""; /* global footer text message */
 float      gWorldX = 1000         ; /* world X dimension          */
 float      gWorldY = 1000         ; /* world X dimension          */
+bool       gGUI = false;
+bool       gVerbose = false;
 
-  struct partition_cell * partitionCfg;
-  struct exampleData * cfgStruct;
+struct partition_cell * gPartitionCfg;
+struct exampleData * gCfgStruct;
 
-inline void runStep  (void (*drawScreen_ptr)(void)) {gRunMode='s' ;} /* run one step */
-inline void runPass  (void (*drawScreen_ptr)(void)) {gRunMode='p' ;} /* run one pass */
-inline void runAll   (void (*drawScreen_ptr)(void)) {gRunMode='a' ;} /* run all      */
+void runStep  (void (*drawScreen_ptr)(void)) {gRunMode='s' ;} /* run one step */
+void runPass  (void (*drawScreen_ptr)(void)) {gRunMode='p' ;} /* run one pass */
+void runAll   (void (*drawScreen_ptr)(void)) {gRunMode='a' ;} /* run all      */
 
 
 /* redrawing routine for still pictures. Redraw if user changes the window           */
 void fpDraw(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, float xWorld, float yWorld);
-void drawScreen() { clearscreen(); fpDraw(partitionCfg, cfgStruct,gWorldX,gWorldY); } /* clear & redraw  */
+void drawScreen() { clearscreen(); fpDraw(gPartitionCfg, gCfgStruct,gWorldX,gWorldY); } /* clear & redraw  */
 
 /* called whenever event_loop gets a button press in the graphics area.              */
 void buttonPress  (float x, float y) {                                     }
@@ -101,7 +83,7 @@ void keyPress     (int i) {                                                     
 /* show global message, wait until 'Proceed' pressed then draw screen                */
 void waitLoop (struct partition_cell * partitionCfg, struct exampleData * cfgStruct)  {
   update_message(gFooterMessage);
-  drawScreen(partitionCfg, cfgStruct);
+  drawScreen();
   event_loop(buttonPress,drawScreen);
 }
 
@@ -114,20 +96,28 @@ void waitLoop (struct partition_cell * partitionCfg, struct exampleData * cfgStr
 
 int main(int argc, char **argv) {
 
-  printf("You have entered file = %s\n",  argv[1]);
+  int fileInd;
+
+  fileInd = commandlineParse(argc, argv);
+
+  printf("You have entered file = %s\n",  argv[fileInd]);
   const char* dir = "benchmarks/";
   const char* filename = argv[1];
-//  struct exampleData cfgStruct;
+  struct exampleData cfgStruct;
   struct exampleData * cfgStructPtr;
 
   struct partitionStruct   schedCfg;
   struct partitionStruct * schedStructPtr;
 
   bool printPart = false;
+//  bool psEnable = false;
 
-  if (argc > 2) {
-    printPart = true;
-  }
+//  if (argc > 2 && (int)argv[2] == 1) {/
+//    printPart = true;
+//  }
+//  if (argc > 3  && (int)argv[3] == 1) {
+//    psEnable = true;
+//  }
 
   int i, j, k;
   int size_connect, net_cons;
@@ -137,35 +127,37 @@ int main(int argc, char **argv) {
   float acc_rate;
   int numStopIter = 0;
 
-  cfgStructPtr = cfgStruct;
 
+  cfgStructPtr = &cfgStruct;
   char* read_file = (char*)malloc(strlen(dir)+strlen(filename));
   strcpy(read_file, dir);
   strcat(read_file, filename);
   readfile(read_file, cfgStructPtr);
+  gCfgStruct = cfgStructPtr;
 
-  printf("num_cells = %d \n" , cfgStruct->num_cell);
-  printf("num_con = %d \n"   , cfgStruct->num_con);
-  printf("num_rows = %d \n"  , cfgStruct->num_rows);
-  printf("num_cols = %d \n"  , cfgStruct->num_cols);
-  printf("num_nets = %d \n"  , cfgStruct->num_con);
-  for(i = 0; i < cfgStruct->num_con; i++ ) {
-     printf("net # %d :", i);
-     for(j = 0; j < cfgStruct->num_terminals[i]; j++) {
-       printf(" %d", cfgStruct->net_connect[i][j] );
-     }
-     printf("\n");
+  if (gVerbose) {
+    printf("num_cells = %d \n" , cfgStructPtr->num_cell);
+    printf("num_con = %d \n"   , cfgStructPtr->num_con);
+    printf("num_rows = %d \n"  , cfgStructPtr->num_rows);
+    printf("num_cols = %d \n"  , cfgStructPtr->num_cols);
+    printf("num_nets = %d \n"  , cfgStructPtr->num_con);
+    for(i = 0; i < cfgStructPtr->num_con; i++ ) {
+       printf("net # %d :", i);
+       for(j = 0; j < cfgStructPtr->num_terminals[i]; j++) {
+         printf(" %d", cfgStructPtr->net_connect[i][j] );
+       }
+       printf("\n");
+    }
   }
 
    // check that the number of cells will fit within the design
-  if (cfgStruct->num_cell > cfgStruct->num_cols*cfgStruct->num_rows) {
-    printf("ERROR : %dx%d grid is too small to place %d cells\n", cfgStruct->num_cols,
-                                                               cfgStruct->num_rows,
-                                                               cfgStruct->num_cell );
+  if (cfgStructPtr->num_cell > cfgStructPtr->num_cols*cfgStructPtr->num_rows) {
+    printf("ERROR : %dx%d grid is too small to place %d cells\n", cfgStructPtr->num_cols,
+                                                               cfgStructPtr->num_rows,
+                                                               cfgStructPtr->num_cell );
     return(0);
   }
 
-  bool gGUI = true;
   if (gGUI) {
 
     // initialize display
@@ -173,67 +165,46 @@ int main(int argc, char **argv) {
     init_world (0.,0.,gWorldX,gWorldY);
 
     /* Create new buttons */
-    create_button ((char*)"Window"    , (char*)"---1"      , NULL     ); /* Separator    */
-    // DE _ FIXME
-    //create_button ((char*)"---1"      , (char*)"Run Step"  , runStep  ); /* run one step */
-    //create_button ((char*)"Run Step"  , (char*)"Run Pass"  , runPass  ); /* run one pass */
-    //create_button ((char*)"Run Pass"  , (char*)"Run All"   , runAll   ); /* run all      */
+    /* Create new buttons */
+    create_button ((char*)"Window"    , (char*)"Run Step"  , runStep  ); /* run one step */
+    create_button ((char*)"Run Step"  , (char*)"Run Pass"  , runPass  ); /* run one pass */
+    create_button ((char*)"Run Pass"  , (char*)"Run All"   , runAll   ); /* run all      */
   }
 
 
-  // DE - output file for results
-  FILE *fp;
-  char* results_file = (char*)malloc(strlen(filename)+strlen(".out"));
-  strcpy(results_file, filename);
-  strcat(results_file, ".out");
-  //printf( results_file );
-  fp = fopen(results_file, "w+");
+  struct partition_cell * partitionCfg;
 
-  // DE - partition cells randoming into two groups
-  //      unevenness of 1 is permitted
-
-
-  // is it better to have two list (one A, one B)?
-  // - we could just go through A
-  //    - go through each net connection list
-  //
-  // list of cell with A/B flag (similiar to previous implementation)
-  //  - Go through the net lists... if all entries are from the same partition, add cost_new
-  //  - otherwise
-
-//  struct partition_cell * partitionCfg;
-
-  // place cells randomly in partition A and B to start
-  partitionCfg = (struct partition_cell *)malloc (sizeof (struct partition_cell) * cfgStruct->num_cell);
-  for(i = 0; i < cfgStruct->num_cell; i++) {
+  // place cells alternately in partition A and B to start
+  partitionCfg = (struct partition_cell *)malloc (sizeof (struct partition_cell) * cfgStructPtr->num_cell);
+  for(i = 0; i < cfgStructPtr->num_cell; i++) {
     partitionCfg[i].partition = i % 2;
     partitionCfg[i].locked = false;
     partitionCfg[i].gain = 0.0;
   }
 
-  //DE - show initial 'random' placement
+  gPartitionCfg = partitionCfg;
 
-  if( printPart ) {
+  // Show initial placement
+  if( gVerbose ) {
     printf("Initial partition: \n");
     printPartition ( partitionCfg, cfgStructPtr);
   }
 
-  if (gGUI) {
-  /* update global message and wait for 'Proceed' to proceed */
-  sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u : %s",
-          filename, cfgStructPtr->num_cell, cfgStructPtr->num_con);
-  if (gRunMode=='f') { /* show initial floorplan for 'final' mode */
-    sprintf(gFooterMessage,"Initial partitioning. Press 'Proceed' to find final solution");
-    sprintf(gFooterLabel,"Initial partitioning");
-    waitLoop(partitionCfg, cfgStructPtr);
-    //if (gPostScript) postscript(drawScreen);
-  }
-}
-
-
   // Calculate initial cut-set size
   cutSet = calcCutSet ( partitionCfg, cfgStructPtr );
   printf("initial cut set is : %d\n", cutSet);
+
+  // display initial partitioning
+  if (gGUI) {
+    /* update global message and wait for 'Proceed' to proceed */
+    sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
+            cfgStructPtr->filename, cfgStructPtr->num_cell, cfgStructPtr->num_con, cutSet);
+    if (gRunMode=='f' || gRunMode=='a') { /* show initial floorplan for 'final' mode */
+      sprintf(gFooterMessage,"Initial partitioning. Press 'Proceed' to find final solution");
+      sprintf(gFooterLabel,"Initial partitioning");
+      waitLoop(partitionCfg, cfgStructPtr);
+    }
+  }
 
   // K-L loop
 
@@ -242,22 +213,20 @@ int main(int argc, char **argv) {
   initSchedule(cfgStructPtr, schedStructPtr);
 
   // output csv header
-  // fputs("temperature, cost, acc_rate, bb_size\n", fp);
+  // fputs("\n", fp);
 
   for(i = 0; i < schedStructPtr->maxSteps; i++ ) {
 
     // Perform iteration of K-L algorithm
-    cutSet = KerrighanLinStep(partitionCfg, cfgStructPtr, schedStructPtr, cutSet);
-    //cutSet = calcCutSet ( partitionCfg, cfgStructPtr );
+    cutSet = KerrighanLinStep(partitionCfg, cfgStructPtr, schedStructPtr, cutSet, i);
 
-    // report statistics of run every 20 iterations
+    // report cutset statistic every iteration
     printf("iteration %d, cut set = %d\n", i, cutSet );
+
   }
 
-  // close output results file
-  //fclose(fp);
-
-  if (printPart) {
+  // display final partition on stdout
+  if (gVerbose) {
     printf("End partition :\n");
     printPartition( partitionCfg, cfgStructPtr);
   }
@@ -265,9 +234,21 @@ int main(int argc, char **argv) {
 
   printf("end cut set is : %d\n", cutSet);
 
+  // display final partition on GUI
+
   /* finished! wait still until 'Exit" is pressed */
+  // unlock	all	nodes
+  unlockNodes(partitionCfg, cfgStructPtr);
   if (gGUI)
-    while(1) waitLoop(partitionCfg, cfgStructPtr);
+    while(1) {
+      sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
+              cfgStructPtr->filename, cfgStructPtr->num_cell, cfgStructPtr->num_con, cutSet);
+
+      sprintf(gFooterMessage,"Final partitioning. Press 'Exit' to terminate");
+      sprintf(gFooterLabel,"Partitioning after pass# %u",schedStructPtr->maxSteps);
+      waitLoop(partitionCfg, cfgStructPtr);
+    }
+
 
   return (0);
 }
@@ -303,6 +284,10 @@ void readfile (const char* filename, struct exampleData * data) {
  }
  fclose(fp);
 
+ int length = strlen(filename);
+ dataRead.filename = (char *)malloc (sizeof (char*) * length);
+ strncpy(dataRead.filename, filename, length);
+
  *data = dataRead;
 
 
@@ -325,7 +310,6 @@ void printPartition ( struct partition_cell * partitionCfg, struct exampleData *
   listA = (int *)malloc(cfgStruct->num_cell * sizeof(int));
   listB = (int *)malloc(cfgStruct->num_cell * sizeof(int));
 
-  // DE - FIXME - STORE IN STRUCT SO THAT WE DON'T HAVE TO RECALCULATE
   for(i=0; i < cfgStruct->num_cell; i++) {
     if ( partitionCfg[i].partition == 0 ) {
        listA[asize] = i;
@@ -355,7 +339,7 @@ void printPartition ( struct partition_cell * partitionCfg, struct exampleData *
   free(listB);
 }
 
-
+// calculated the cut set of all hypergraphs
 int calcCutSet ( struct partition_cell * partitionCfg, struct exampleData * cfgStruct) {
 
   int i,j;
@@ -363,8 +347,8 @@ int calcCutSet ( struct partition_cell * partitionCfg, struct exampleData * cfgS
   int cell;
   int partition_temp;
 
-  // for reach net, determine the bounding box of the nells in the placement
-  // grid
+  // for reach net, determine the cut set and add to cutset counter
+
   cutSet = 0;
 
   for(i = 0; i < cfgStruct->num_con; i++ ) {
@@ -384,7 +368,7 @@ int calcCutSet ( struct partition_cell * partitionCfg, struct exampleData * cfgS
   return cutSet;
 }
 
-
+// Calculates gains of nodes in the hypergraph
 void calcGains(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct) {
 
 
@@ -407,22 +391,15 @@ void calcGains(struct partition_cell * partitionCfg, struct exampleData * cfgStr
     // Determine multi-terminal partitioning for each net
 
     //listA = (int *)malloc( sizeof(int));
-    //listB = (int *)malloc( sizeof(int));
     asize = 0;
     bsize = 0;
 
-    //listA = (int *)malloc(cfgStruct->num_cell * sizeof(int));
-    //listB = (int *)malloc(cfgStruct->num_cell * sizeof(int));
-
-    // DE - FIXME - STORE IN STRUCT SO THAT WE DON'T HAVE TO RECALCULATE
     for(j = 0; j < cfgStruct->num_terminals[i]; j++) {
       cell = cfgStruct->net_connect[i][j];
       if ( partitionCfg[cell].partition == 0 ) {
-         //listA[asize] = j;
          asize++;
       }
       else {
-        //listB[bsize] = j;
         bsize++;
       }
     }
@@ -430,14 +407,6 @@ void calcGains(struct partition_cell * partitionCfg, struct exampleData * cfgStr
     // Start with the original K-L gain equation
     float attract_alpha = 1.0;
     float repulse_alpha = 1.0;
-    float scalar;
-    // DE - let's try to improve this result be weighting smaller cliques  more
-    if (asize + bsize > 4) {
-      scalar = pow( (float)(asize + bsize - 4), 0.5);
-    } else {
-      scalar = 1.0;
-    }
-      scalar = 1.0;
 
     // with the partition information for each net, iterate again to get calcGains
     for(j = 0; j < cfgStruct->num_terminals[i]; j++) {
@@ -462,48 +431,12 @@ void calcGains(struct partition_cell * partitionCfg, struct exampleData * cfgStr
 
         if ( partitionCfg[ cell ].partition == 0 ) { // partition a
 
-          partitionCfg[ cell ].gain += scalar*( attract_alpha*( (float) bsize / (float) (asize + bsize -1) ) - (repulse_alpha)* ( (float) (asize-1) / (float) (asize + bsize -1 ) ) );
-          //partitionCfg[ cell ].gain += scalar*( attract_alpha*pow( ( (float) bsize / (float) (asize + bsize -1) ), 2) - (repulse_alpha)*pow( ( (float) (asize-1) / (float) (asize + bsize -1 ) ), 2) );
-
-          //if (asize > bsize) {
-          //  partitionCfg[ cell ].gain += 0.5 - pow(asize+1, -2)*(1 - bsize / (float) (asize))/2;
-          //} else {
-          //  partitionCfg[ cell ].gain += 0.5 + pow(asize+1, -2)*(1 - asize / (float) (bsize))/2;
-          //}
-
-          //partitionCfg[ cell ].gain += 1 - pow((( (float) bsize / (float) (asize + bsize - 1) ) - ( (float) (asize-1) / (float) (asize + bsize - 1) )), 2 );
-          // if (asize > bsize ) {
-          //   partitionCfg[ cell ].gain -= ( 1.0 / (float)asize );
-          // }
-          // else {
-          //   partitionCfg[ cell ].gain += ( 1.0 / (float)bsize );
-          // }
+          partitionCfg[ cell ].gain += ( ( (float) bsize / (float) (asize + bsize -1) ) - ( (float) (asize-1) / (float) (asize + bsize -1 ) ) );
 
         }
         else { // partition b
 
-          partitionCfg[ cell ].gain += scalar*( attract_alpha*( (float) asize / (float) (asize + bsize -1) ) - (repulse_alpha)*( (float) (bsize-1) / (float) (asize + bsize -1 ) ) );
-          //partitionCfg[ cell ].gain += scalar*( attract_alpha*pow( ( (float) asize / (float) (asize + bsize -1) ), 2) - (repulse_alpha)*pow( ( (float) (bsize-1) / (float) (asize + bsize -1 ) ), 2) );
-
-          //if (bsize > asize) {
-          //  partitionCfg[ cell ].gain -= 1 - pow((( (float) asize / (float) (asize + bsize - 1) ) - ( (float) (bsize-1) / (float) (asize + bsize - 1) )), 2 );
-          //} else {
-          //  partitionCfg[ cell ].gain += 1 - pow((( (float) asize / (float) (asize + bsize - 1) ) - ( (float) (bsize-1) / (float) (asize + bsize - 1) )), 2 );
-          //}
-
-          //if (bsize > asize) {
-          //  partitionCfg[ cell ].gain += 0.5 - pow(asize+1, -2)*(1 - asize / (float) (bsize))/2;
-          //} else {
-          //  partitionCfg[ cell ].gain += 0.5 + pow(asize+1, -2)*(1 - bsize / (float) (asize))/2;
-          //}
-
-          //partitionCfg[ cell ].gain += 1 - pow((( (float) asize / (float) (asize + bsize - 1) ) - ( (float) (bsize-1) / (float) (asize + bsize - 1) )), 2 );
-          // if (bsize > asize ) {
-          //   partitionCfg[ cell ].gain -= ( 1.0 / (float)bsize );
-          // }
-          // else {
-          //   partitionCfg[ cell ].gain += ( 1.0 / (float)asize );
-          // }
+          partitionCfg[ cell ].gain += ( ( (float) asize / (float) (asize + bsize -1) ) - ( (float) (bsize-1) / (float) (asize + bsize -1 ) ) );
 
         }
 
@@ -513,21 +446,13 @@ void calcGains(struct partition_cell * partitionCfg, struct exampleData * cfgStr
 
   }
 
-
-  for(i=0; i < cfgStruct->num_cell; i++) {
-    //printf("cell %d, gain = %0.4f\n", i, partitionCfg[ i ].gain);
-  }
-
-
 }
 
 
 
-
+// Indiviation Swap interation
 void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct) {
 
-  // choose	node	with	highest	gain	whose movement	would	not	cause	an imbalance
-  //   move	nodeto	other	block	and	lock	it
 
   // Find cell with the highest gain that is unlocked and won't cause an imbalance
 
@@ -544,7 +469,6 @@ void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData *
   listA = (int *)malloc(cfgStruct->num_cell * sizeof(int));
   listB = (int *)malloc(cfgStruct->num_cell * sizeof(int));
 
-  // DE - FIXME - STORE IN STRUCT SO THAT WE DON'T HAVE TO RECALCULATE
   for(i=0; i < cfgStruct->num_cell; i++) {
     if ( partitionCfg[i].partition == 0 ) {
       listA[asize] = i;
@@ -560,8 +484,6 @@ void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData *
 
   if (bsize < asize) { // pick from list A
 
-    //printf(" A > B \n");
-
     // pick the cell in a with the largest gain that is unlocked
     for(i=0; i < asize; i++) {
       if( partitionCfg[ listA[i] ].gain > (float)max_gain &&
@@ -573,9 +495,6 @@ void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData *
 
   }
   else if (bsize > asize) { // pick from list B
-
-    //printf(" B > A \n");
-    //printf(" bsize = %d\n", bsize);
 
     // pick the cell in b with the largest gain that is unlocked
     for(i=0; i < bsize; i++) {
@@ -591,8 +510,6 @@ void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData *
   else { //bsize == a_size, pick from either
     // pick the cell in a or b with the largest gain that is unlocked
 
-    //printf(" B == A \n");
-
     for(i=0; i < cfgStruct->num_cell; i++) {
       if( partitionCfg[ i ].gain > max_gain &&
           partitionCfg[ i ].locked == false) {
@@ -604,24 +521,19 @@ void KerrighanLinSwap(struct partition_cell * partitionCfg, struct exampleData *
   }
 
   // Swap the maximum gain cell
-  //printf("swapping cell # %d\n", max_idx);
   partitionCfg[ max_idx ].partition = partitionCfg[ max_idx ].partition ^ 1;
   partitionCfg[ max_idx ].locked = true;
-
-  // for(i=0; i < bsize; i++) {
-  //   printf("list B[%d] = %d\n", i, listB[i] );
-  // }
-  // for(i=0; i < asize; i++) {
-  //   printf("list A[%d] = %d\n", i, listA[i] );
-  // }
-  // printf("\n");
 
   free(listA);
   free(listB);
 
+  if (gGUI && (gRunMode=='s')) {
+    waitLoop(partitionCfg, cfgStruct);
+  }
+
 }
 
-
+// unlocks all nodes
 void unlockNodes( struct partition_cell * partitionCfg, struct exampleData * cfgStruct) {
 
   int i;
@@ -633,8 +545,8 @@ void unlockNodes( struct partition_cell * partitionCfg, struct exampleData * cfg
 
 }
 
-
-int KerrighanLinStep(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct, int cutSet) {
+// Performs one step of the KL-algorithm
+int KerrighanLinStep(struct partition_cell * partitionCfg, struct exampleData * cfgStruct, struct partitionStruct * schedStruct, int cutSet, int step) {
 
   int lockCnt = 0;
   int cutSet_temp = 0;
@@ -649,6 +561,19 @@ int KerrighanLinStep(struct partition_cell * partitionCfg, struct exampleData * 
 
   // unlock	all	nodes
   unlockNodes(partitionCfg, cfgStruct);
+
+  if (gGUI && (gRunMode=='p')) {
+    sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
+            cfgStruct->filename, cfgStruct->num_cell, cfgStruct->num_con, cutSet);
+    if (step == 0) { /* first pass */
+      sprintf(gFooterMessage,"Initial partitioning. Press 'Proceed' to preform pass# 1");
+      sprintf(gFooterLabel,"Initial partitioning");
+    } else {
+      sprintf(gFooterMessage,"Initial partitioning. Press 'Proceed' to preform pass# %u",step+1);
+      sprintf(gFooterLabel,"partitioning after pass# %u",step);
+    }
+    waitLoop(partitionCfg, cfgStruct);
+  }
 
   // while some nodes are unlocked
   while ( lockCnt < cfgStruct->num_cell) {
@@ -683,20 +608,7 @@ void initSchedule(struct exampleData * cfgStruct, struct partitionStruct * sched
 
   struct partitionStruct partitionInit;
 
-  //partitionInit.initTemp = 1000.0;
-  //partitionInit.currTemp = 1000.0;
-  //partitionInit.betaDecay = true;
-  //partitionInit.tempBeta = 0.80;
-  //partitionInit.tempBetaSwitch = false;
-  //partitionInit.tempBeta2 = 0.98;
-  //partitionInit.tempIter = (int)( 10.0 * pow( (double)cfgStruct->num_cell, (double)(4.0/3.0) ) );
-  partitionInit.maxSteps = 8;
-  //partitionInit.stepAccept = false;
-  //partitionInit.accRate = 0.44;
-  //partitionInit.accCnt = 0;
-  //partitionInit.bb_size = MAX( cfgStruct->num_cols, cfgStruct->num_rows);
-  //partitionInit.stopCostStd = 0.1;
-  //partitionInit.numStopIter = 100;
+  partitionInit.maxSteps = 6;
 
   *schedStruct = partitionInit;
 
@@ -753,23 +665,6 @@ void fpDraw(struct partition_cell * partitionCfg, struct exampleData * cfgStruct
   setfontsize(10);
   drawtext(440,80,gHeaderLabel,880);
 
-  /* draw improvement scale */
-  //scaleStep=800/20;
-  //improvementRate = (float)(fp->crossingNetsN)/(float)(fp->netsN);
-  //setcolor(LIGHTGREY); fillrect(900,60 ,1000,940);
-  //setcolor(WHITE    ); fillrect(950,120,980 ,920);
-  //if (fp->isWorst) setcolor(RED); else setcolor(GREEN);
-  //fillrect(950,920-(improvementRate/0.05)*scaleStep, 980 ,920);
-  //setcolor(BLACK); drawrect(950,120,980 ,920);
-  //drawtext(950,75,"Crossing",100);
-  //drawtext(950,100,"Total Nets",100);
-  //drawline(910,85,990,85);
-  //for(i=1;i<=19;i++) {
-  //  drawline(940,i*scaleStep+120,980,i*scaleStep+120);
-  //  sprintf(label,"%.2f",1-i*.05);
-  //  for(j=0; j<4; j++) label[j]=label[j+1]; /* shift label to remove leading zero */
-  //  drawtext(920,i*scaleStep+120,label,30);
-  //}
 
   /* draw footer */
   setcolor(LIGHTGREY); fillrect(0,960,1000,1000);
@@ -783,21 +678,12 @@ void fpDraw(struct partition_cell * partitionCfg, struct exampleData * cfgStruct
 
   /* draw two groups */
   setlinestyle (SOLID);
-  setcolor(LIGHTGREY);
+  setcolor(WHITE);
   fillrect(20,140,390,880);
   fillrect(490,140,860,880);
-  setcolor(RED);
+  setcolor(BLACK);
   drawrect(20,140,390,880);
   drawrect(490,140,860,880);
-
-  /* draw groups/seperator labels */
-  //setcolor(BLACK);
-  //sprintf(label,"Cells#:%u",fp->groupCellsN[0]);
-  //drawtext(205,900,label,370);
-  //printf(label,"Cells#:%u",fp->groupCellsN[1]);
-  //drawtext(657,900,label,370);
-  //sprintf(label,"nets#:%u",fp->crossingNetsN);
-  //drawtext(440,920,label,200);
 
 
   step= (740./(float)(2*ny+2));
@@ -838,7 +724,7 @@ void fpDraw(struct partition_cell * partitionCfg, struct exampleData * cfgStruct
     srcCell1 = UINT_MAX;
 
     /* find net cells in each groups, if possible */
-    for(celli==0; celli<cfgStruct->num_terminals[neti]; celli++) {
+    for(celli=0; celli<cfgStruct->num_terminals[neti]; celli++) {
       curCell = cfgStruct->net_connect[neti][celli];
         if (partitionCfg[curCell].partition == 0)
           srcCell0 = curCell;
@@ -848,7 +734,8 @@ void fpDraw(struct partition_cell * partitionCfg, struct exampleData * cfgStruct
 
     setcolor((enum color_types)((palette++)%7+4)); /* cahnge color */
     /* draw line between source cell and all other net cells */
-    for(celli==0; celli<cfgStruct->num_terminals[neti]; celli++) {
+    for(celli=0; celli<cfgStruct->num_terminals[neti]; celli++) {
+
       curCell = cfgStruct->net_connect[neti][celli];
         if (partitionCfg[curCell].partition == 0) { /* if chosen cell in group 0 */
           drawline(partitionCfg[srcCell0].location.x,partitionCfg[srcCell0].location.y,
@@ -865,3 +752,75 @@ void fpDraw(struct partition_cell * partitionCfg, struct exampleData * cfgStruct
   }
 
 } /* fpDraw */
+
+
+/* commandline arguments parsing        */
+/* results used to set global variables */
+/* returns filename index in argv       */
+unsigned int commandlineParse(int argc, char *argv[]  ){
+
+  /* arguments parsing                                              */
+  int argi;                             /* arguments index          */
+  int fileNameArgInd=-1;                /* file name argument index */
+  for(argi=1;argi<argc;argi++) {        /* check all argument       */
+    if (argv[argi][0]=='-') {           /* switch argument          */
+      switch (tolower(argv[argi][1])) { /* consider first letter    */
+
+        case 'h': /* help */
+          printf("\nKernighan-Lin based bi-partitioning algorithm for hypergraphs\n"     );
+          printf("Usage:\n"                                                                       );
+          printf("  assignment3 INFILE [OPTIONS]\n"                                              );
+          printf("Options:\n"                                                                     );
+          printf("  -help       (or -h): Print this message\n"                                    );
+          printf("  -gui        (or -g): Enable graphical user interface (GUI) \n"                );
+          printf("                       Automatically enabled if postscript is enabled\n"        );
+          printf("  -verbose    (or -v): Enable verbose logging,\n"                               );
+          printf("                       Automatically enabled if GUI is disabled\n"              );
+          printf("  -runmode    (or -r): Run mode, followed by one of the following\n"            );
+          printf("                       'step'  (or 's'): display results every one step\n"      );
+          printf("                       'pass'  (or 'p'): display results every full pass\n"     );
+          printf("                       'final' (or 'f'): display print final result only\n"     );
+          printf("                       Default mode is 'step'\n"                                );
+          printf("Input file syntax:\n"                                                           );
+          printf("  <CELLS#> <NET#> <ROWS#> <COLUMNS#>\n"                                         );
+          printf("  <#CELLS_CONNECTED_TO_NET_1> <LIST_OF_CELLS_CONNECTED_TO_NET_1>\n"             );
+          printf("  <#CELLS_CONNECTED_TO_NET_2> <LIST_OF_CELLS_CONNECTED_TO_NET_2>\n"             );
+          printf("  ...\n"                                                                        );
+          printf("  <#CELLS_CONNECTED_TO_NET_n> <LIST_OF_CELLS_CONNECTED_TO_NET_n>\n"             );
+          printf("Examples:\n"                                                                    );
+          printf("  assignment3 cps.txt (using default options)\n"                               );
+          printf("  assignment3 cps.txt -gui \n"      );
+          printf("  assignment3 cps.txt -g -r f \n"              );
+          exit(1);
+
+        case 'v': /* verbose mode    */
+          gVerbose=1; /* set verbose */
+          break;
+
+        case 'g': /* GUI mode */
+          gGUI=1; /* set GUI  */
+          break;
+
+        case 'r': /* run mode      */
+          argi++; /* next argument */
+          gRunMode = tolower(argv[argi][0]);
+          if ((gRunMode != 's')&&(gRunMode != 'p')&&(gRunMode != 'f')) {
+            printf("-E- Commandline error: -runmode should be followed by: 'step', 'pass', or 'final'! Exiting...\n");
+            exit(-1);
+          }
+          break;
+
+        default : /* unknown argument */
+          printf("-E- unknown argument %s\n",argv[argi]);
+          exit(-1);
+
+      } /* switch */
+    } else fileNameArgInd = argi; /* file name argument index */
+  } /* arguments loop (for) */
+
+  /* check if infile is supplied */
+  if (fileNameArgInd<0) {printf(" -E- infile should be supplied\n"); exit(-1);}
+
+  /* return filename index in arguments array */
+  return fileNameArgInd;
+}

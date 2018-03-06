@@ -15,20 +15,22 @@ CC = gcc
 
 #LIB = -lX11 -lm -R/usr/openwin/lib
 #LIB = -lX11 -lm
-LIB = -lX11 -lXau -lws2_32
+LIB = -lX11 -lm
 
 # Path to the X libraries.
 
-#LIB_PATH = -LC:/cygwin64/lib
+LIB_PATH = -L/usr/lib64/
 
-#X11_INCLUDE = -IC:/cygwin64/usr/include/
+# Path to X11 include file on the EECG system.
+
+X11_INCLUDE = -I/usr/include/
 
 # Flags for lots of warnings, debugging, and full optimization,
 # respectively are listed below.
 
 #FLAGS = -Wall -Wpointer-arith -Wcast-qual -Wstrict-prototypes -O -D__USE_FIXED_PROTOTYPES__ -ansi -pedantic -Wmissing-prototypes -Wshadow -Wcast-align -D_POSIX_SOURCE
-#FLAGS = -g
-FLAGS = -O2
+FLAGS = -g
+#FLAGS = -O2
 
 EXE = assignment3
 
@@ -45,5 +47,5 @@ $(EXE): $(OBJ)
 graphics.o: graphics.c $(H)
 	$(CC) -c $(FLAGS) $(X11_INCLUDE) graphics.c
 
-ass3.o: assignment3.c $(H)
+assignment3.o: assignment3.c $(H)
 	$(CC) -c $(FLAGS) assignment3.c
