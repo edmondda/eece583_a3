@@ -21,6 +21,7 @@ struct exampleData {
 
 struct partitionStruct {
    int     maxSteps;
+   int     nIters;
 };
 
 struct location {
@@ -89,9 +90,13 @@ void waitLoop (struct partition_cell * partitionCfg, struct exampleData * cfgStr
 
 /*******************/
 
+// Random number generation
 
-#define MAX(x, y) (((x) > (y)) ? (x) : (y))
-#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+unsigned int getUIntRand(unsigned int minRand, unsigned int maxRand						);
+void uarrRandInit( unsigned int *uarr   , unsigned int  uarrSize   ,
+                   unsigned int  minRand, unsigned int  maxRand   );
+int uarrValueFound( unsigned int *uarr   , unsigned int uarrSize, unsigned int val  ,
+                    unsigned int  fromInd, unsigned int toInd                      );
 
 
 int main(int argc, char **argv) {
@@ -120,13 +125,10 @@ int main(int argc, char **argv) {
 //  }
 
   int i, j, k;
-  int size_connect, net_cons;
-  int cutSet, cutSet_new, delta_cutSet;
-  int * cost_list;
-  float cost_std = 0.0;
-  float acc_rate;
-  int numStopIter = 0;
+  int minCutSet, cutSet, cutSet_new, delta_cutSet, cutSetSum;
+  float cutSetAvg = 0.0;
 
+  minCutSet = pow(2,16);
 
   cfgStructPtr = &cfgStruct;
   char* read_file = (char*)malloc(strlen(dir)+strlen(filename));
@@ -172,83 +174,109 @@ int main(int argc, char **argv) {
   }
 
 
+  unsigned int * partArr_inds;
   struct partition_cell * partitionCfg;
-
-  // place cells alternately in partition A and B to start
-  partitionCfg = (struct partition_cell *)malloc (sizeof (struct partition_cell) * cfgStructPtr->num_cell);
-  for(i = 0; i < cfgStructPtr->num_cell; i++) {
-    partitionCfg[i].partition = i % 2;
-    partitionCfg[i].locked = false;
-    partitionCfg[i].gain = 0.0;
-  }
-
-  gPartitionCfg = partitionCfg;
-
-  // Show initial placement
-  if( gVerbose ) {
-    printf("Initial partition: \n");
-    printPartition ( partitionCfg, cfgStructPtr);
-  }
-
-  // Calculate initial cut-set size
-  cutSet = calcCutSet ( partitionCfg, cfgStructPtr );
-  printf("initial cut set is : %d\n", cutSet);
-
-  // display initial partitioning
-  if (gGUI) {
-    /* update global message and wait for 'Proceed' to proceed */
-    sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
-            cfgStructPtr->filename, cfgStructPtr->num_cell, cfgStructPtr->num_con, cutSet);
-    if (gRunMode=='f' || gRunMode=='a') { /* show initial floorplan for 'final' mode */
-      sprintf(gFooterMessage,"Initial partitioning. Press 'Proceed' to find final solution");
-      sprintf(gFooterLabel,"Initial partitioning");
-      waitLoop(partitionCfg, cfgStructPtr);
-    }
-  }
-
-  // K-L loop
 
   // initialize run parameters
   schedStructPtr = &schedCfg;
   initSchedule(cfgStructPtr, schedStructPtr);
 
-  // output csv header
-  // fputs("\n", fp);
+  // randomize seed based on time
+  srandom(time(NULL));
 
-  for(i = 0; i < schedStructPtr->maxSteps; i++ ) {
+  // place cells alternately in partition A and B to start
+  for(k = 0; k < schedStructPtr->nIters; k++ ) {
 
-    // Perform iteration of K-L algorithm
-    cutSet = KerrighanLinStep(partitionCfg, cfgStructPtr, schedStructPtr, cutSet, i);
+    partArr_inds = (unsigned int *)malloc(sizeof(unsigned int) * cfgStructPtr->num_cell );
+    uarrRandInit( partArr_inds , cfgStructPtr->num_cell, 0, cfgStructPtr->num_cell-1  );
 
-    // report cutset statistic every iteration
-    printf("iteration %d, cut set = %d\n", i, cutSet );
-
-  }
-
-  // display final partition on stdout
-  if (gVerbose) {
-    printf("End partition :\n");
-    printPartition( partitionCfg, cfgStructPtr);
-  }
-  cutSet = calcCutSet( partitionCfg, cfgStructPtr );
-
-  printf("end cut set is : %d\n", cutSet);
-
-  // display final partition on GUI
-
-  /* finished! wait still until 'Exit" is pressed */
-  // unlock	all	nodes
-  unlockNodes(partitionCfg, cfgStructPtr);
-  if (gGUI)
-    while(1) {
-      sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
-              cfgStructPtr->filename, cfgStructPtr->num_cell, cfgStructPtr->num_con, cutSet);
-
-      sprintf(gFooterMessage,"Final partitioning. Press 'Exit' to terminate");
-      sprintf(gFooterLabel,"Partitioning after pass# %u",schedStructPtr->maxSteps);
-      waitLoop(partitionCfg, cfgStructPtr);
+    partitionCfg = (struct partition_cell *)malloc (sizeof (struct partition_cell) * cfgStructPtr->num_cell);
+    for(i = 0; i < cfgStructPtr->num_cell; i++) {
+      //partitionCfg[i].partition = i % 2;
+      partitionCfg[partArr_inds[i]].partition = i % 2;
+      partitionCfg[i].locked = false;
+      partitionCfg[i].gain = 0.0;
     }
 
+    gPartitionCfg = partitionCfg;
+
+    // Show initial placement
+    if( gVerbose ) {
+      printf("Initial partition: \n");
+      printPartition ( partitionCfg, cfgStructPtr);
+    }
+
+    // Calculate initial cut-set size
+    cutSet = calcCutSet ( partitionCfg, cfgStructPtr );
+    if (gVerbose) {
+      printf("initial cut set is : %d\n", cutSet);
+    }
+
+    // display initial partitioning
+    if (gGUI) {
+      /* update global message and wait for 'Proceed' to proceed */
+      sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
+              cfgStructPtr->filename, cfgStructPtr->num_cell, cfgStructPtr->num_con, cutSet);
+      if (gRunMode=='f' || gRunMode=='a') { /* show initial floorplan for 'final' mode */
+        sprintf(gFooterMessage,"Initial partitioning. Press 'Proceed' to find final solution");
+        sprintf(gFooterLabel,"Initial partitioning");
+        waitLoop(partitionCfg, cfgStructPtr);
+      }
+    }
+
+    // K-L loop
+
+
+    // output csv header
+    // fputs("\n", fp);
+
+    for(i = 0; i < schedStructPtr->maxSteps; i++ ) {
+
+      // Perform iteration of K-L algorithm
+      cutSet = KerrighanLinStep(partitionCfg, cfgStructPtr, schedStructPtr, cutSet, i);
+
+      // report cutset statistic every iteration
+      if (gVerbose) {
+        printf("iteration %d, cut set = %d\n", i, cutSet );
+      }
+
+    }
+
+    // display final partition on stdout
+    if (gVerbose) {
+      printf("End partition :\n");
+      printPartition( partitionCfg, cfgStructPtr);
+    }
+    cutSet = calcCutSet( partitionCfg, cfgStructPtr );
+    cutSetSum += cutSet;
+    if ( cutSet < minCutSet ) {
+      minCutSet = cutSet;
+    }
+
+    if (gVerbose) {
+      printf("end cut set is : %d\n", cutSet);
+    }
+
+    // display final partition on GUI
+
+    /* finished! wait still until 'Exit" is pressed */
+    // unlock	all	nodes
+    unlockNodes(partitionCfg, cfgStructPtr);
+    if (gGUI)
+      while(1) {
+        sprintf(gHeaderLabel,"Design: %s  |  Cells: %u  |  Nets: %u | Cut Set : %d",
+                cfgStructPtr->filename, cfgStructPtr->num_cell, cfgStructPtr->num_con, cutSet);
+
+        sprintf(gFooterMessage,"Final partitioning. Press 'Exit' to terminate");
+        sprintf(gFooterLabel,"Partitioning after pass# %u",schedStructPtr->maxSteps);
+        waitLoop(partitionCfg, cfgStructPtr);
+      }
+
+  }
+
+  cutSetAvg = (float) cutSetSum / (float) schedStructPtr->nIters;
+  printf("average cut set is : %f\n", cutSetAvg);
+  printf("min cut set is : %d\n", minCutSet);
 
   return (0);
 }
@@ -609,6 +637,7 @@ void initSchedule(struct exampleData * cfgStruct, struct partitionStruct * sched
   struct partitionStruct partitionInit;
 
   partitionInit.maxSteps = 6;
+  partitionInit.nIters = 1;
 
   *schedStruct = partitionInit;
 
@@ -823,4 +852,35 @@ unsigned int commandlineParse(int argc, char *argv[]  ){
 
   /* return filename index in arguments array */
   return fileNameArgInd;
+}
+
+
+unsigned int getUIntRand(unsigned int minRand, unsigned int maxRand						){
+ /* random()								gives a random number in [0,RAND_MAX]		*/
+ /* random()%maxRand						gives a random number between [0,maxRand-1]	*/
+ /* random()%(maxRand-minRan+1)			gives a random number in [0,maxRand-minRand]*/
+ /* random()%(maxRand-minRan+1)+minRand	gives a random number in [minRand,maxRand]	*/
+ return ( random() % (maxRand - minRand + 1) ) + minRand;
+}
+
+/* generate a random numbers array between minRand and maxRand with different numbers */
+void uarrRandInit( unsigned int *uarr   , unsigned int  uarrSize   ,
+                   unsigned int  minRand, unsigned int  maxRand   ){
+  unsigned int randNum, i;
+  for(i=0; i<uarrSize; i++) {
+    randNum = getUIntRand(minRand,maxRand);
+    while (uarrValueFound(uarr,uarrSize,randNum,0,i-1)) /* until not found previously */
+      randNum = getUIntRand(minRand,maxRand);           /* generate new number        */
+    uarr[i] = randNum;
+  }
+}
+
+/* return 1 if 'value' is found in the array between fromInd to toInd, 0 otherwise */
+int uarrValueFound( unsigned int *uarr   , unsigned int uarrSize, unsigned int val  ,
+                    unsigned int  fromInd, unsigned int toInd                      ){
+  unsigned int i;
+  if ((fromInd>toInd)||(toInd>=uarrSize)) return 0;
+  for(i=fromInd; i<=toInd; i++)
+    if (uarr[i] == val) return 1;
+  return 0;
 }
